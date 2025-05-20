@@ -11,7 +11,6 @@ ARG GIT_COMMIT=unknown
 COPY Omsirp.slnx .
 # Copy the project file(s) - adjust the pattern if your project is in a subdirectory
 COPY src/*.csproj ./src/ 
-COPY test/*.csproj ./test/ 
 # If your project is in a subdirectory (e.g., src/YourProject), you might need:
 # COPY src/YourProject/*.csproj ./src/YourProject/ 
 
@@ -23,7 +22,6 @@ RUN dotnet restore Omsirp.slnx
 # Adjust if your code structure is different (e.g., COPY src/ ./src/)
 COPY . .
 COPY src/ ./src/
-COPY test/ ./test/
 
 # Build and publish the application using the solution file
 # Configure for Release and specify the output directory
