@@ -62,6 +62,7 @@ public class DiscordBotService : IHostedService
     private async Task ReadyAsync()
     {
         _logger.LogInformation("{CurrentUser} is connected and ready!", _client.CurrentUser);
+        await Task.CompletedTask;
     }
 
     private Task LogAsync(LogMessage log)

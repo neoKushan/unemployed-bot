@@ -68,7 +68,7 @@ public class GeminiSentimentService
         }
     }
 
-    public async Task<string> GetResponseAsync(SocketMessage message)
+    public async Task<string> GetResponseAsync(SocketUserMessage message)
     {
         if (!_isOperational || _generativeModelClient == null)
         {
@@ -93,14 +93,28 @@ public class GeminiSentimentService
 
             var response = await _generativeModelClient.GenerateContent(prompt, generationConfig);
 
-            if (response?.Candidates?.FirstOrDefault()?.Content?.Parts == null)
+            if (response?.Candidates == null || !response.Candidates.Any())
+            {
+                _logger.LogWarning("Gemini returned no candidates in the response.");
+                return string.Empty;
+            }
+
+            var candidate = response.Candidates.First();
+            if (candidate?.Content?.Parts == null)
             {
                 _logger.LogWarning("Gemini returned an empty or null response.");
                 return string.Empty;
             }
 
+            var parts = candidate.Content.Parts;
+            if (parts == null)
+            {
+                _logger.LogWarning("Gemini returned null parts in the response.");
+                return string.Empty;
+            }
+
             // Join all parts of the response together
-            var botResponse = string.Join(" ", response.Candidates.First().Content.Parts
+            var botResponse = string.Join(" ", parts
                 .Select(part => part.Text?.Trim())
                 .Where(text => !string.IsNullOrWhiteSpace(text)));
 
@@ -120,7 +134,7 @@ public class GeminiSentimentService
         }
     }
 
-    private string BuildPrompt(SocketMessage message)
+    private string BuildPrompt(SocketUserMessage message)
     {
         var promptBuilder = new StringBuilder();
 
@@ -131,20 +145,17 @@ public class GeminiSentimentService
         promptBuilder.AppendLine();
 
         // Add context if available
-        if (message is SocketUserMessage userMessage)
+        var contextMessages = GetContextMessages(message);
+        if (contextMessages.Any())
         {
-            var contextMessages = GetContextMessages(userMessage);
-            if (contextMessages.Any())
+            promptBuilder.AppendLine("Previous messages in this conversation:");
+            foreach (var contextMsg in contextMessages)
             {
-                promptBuilder.AppendLine("Previous messages in this conversation:");
-                foreach (var contextMsg in contextMessages)
-                {
-                    var timestamp = _includeTimestamps ? $" [{contextMsg.Timestamp:HH:mm}]" : "";
-                    var username = _includeUsernames ? $"{contextMsg.Author.Username}: " : "";
-                    promptBuilder.AppendLine($"{username}{contextMsg.Content}{timestamp}");
-                }
-                promptBuilder.AppendLine();
+                var timestamp = _includeTimestamps ? $" [{contextMsg.Timestamp:HH:mm}]" : "";
+                var username = _includeUsernames ? $"{contextMsg.Author.Username}: " : "";
+                promptBuilder.AppendLine($"{username}{contextMsg.Content}{timestamp}");
             }
+            promptBuilder.AppendLine();
         }
 
         // Add the current message
@@ -156,14 +167,14 @@ public class GeminiSentimentService
         return promptBuilder.ToString();
     }
 
-    private IEnumerable<SocketMessage> GetContextMessages(SocketUserMessage message)
+    private IEnumerable<SocketUserMessage> GetContextMessages(SocketUserMessage message)
     {
-        var contextMessages = new List<SocketMessage>();
+        var contextMessages = new List<SocketUserMessage>();
         
         // If the message is a reply, get the referenced message
         if (message.Reference?.MessageId.IsSpecified == true)
         {
-            var referencedMessage = message.Channel.GetMessageAsync(message.Reference.MessageId.Value).Result;
+            var referencedMessage = message.Channel.GetMessageAsync(message.Reference.MessageId.Value).Result as SocketUserMessage;
             if (referencedMessage != null)
             {
                 contextMessages.Add(referencedMessage);
@@ -174,7 +185,7 @@ public class GeminiSentimentService
         if (message.Channel is IThreadChannel thread)
         {
             var messages = thread.GetMessagesAsync(_maxContextMessages).FlattenAsync().Result;
-            contextMessages.AddRange(messages.Where(m => m.Id != message.Id));
+            contextMessages.AddRange(messages.OfType<SocketUserMessage>().Where(m => m.Id != message.Id));
         }
 
         return contextMessages.OrderBy(m => m.Timestamp);
