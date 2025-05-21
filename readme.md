@@ -6,7 +6,6 @@ Leveraging **cloud-native** principles with Docker support and a cutting-edge Gi
 
 ## Core Vibes & Features
 
-* **Intuitive Responses:** Reacts dynamically to specific trigger messages from designated users.
 * **Agile Configuration:** Managed via `appsettings.json` for seamless, **low-code** updates to users, triggers, and responses. Just tweak the JSON and let the vibe flow!
 * **Discord.Net Synergy:** Utilizes the powerful Discord.Net library for seamless API interaction.
 * **Containerized Deployment:** Includes a `Dockerfile` for effortless, **cloud-native** deployment.
