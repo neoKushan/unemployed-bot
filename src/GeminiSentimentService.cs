@@ -1,11 +1,14 @@
 // src/GeminiSentimentService.cs
 
+using Discord;
+using Discord.WebSocket;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
-using Mscc.GenerativeAI; // Use the library's namespace
+using System.Text;
+using Mscc.GenerativeAI;
 
 public class GeminiSentimentService
 {
@@ -14,7 +17,12 @@ public class GeminiSentimentService
     private readonly GenerativeModel? _generativeModelClient;
     private readonly string? _modelId;
     private readonly string? _apiKey;
-    private readonly string _promptTemplate;
+    private readonly string _botPersonality;
+    private readonly string _responseStyle;
+    private readonly string _responseConstraints;
+    private readonly int _maxContextMessages;
+    private readonly bool _includeUsernames;
+    private readonly bool _includeTimestamps;
     private readonly bool _isOperational = false;
     public bool IsOperational => _isOperational;
 
@@ -25,8 +33,19 @@ public class GeminiSentimentService
 
         _modelId = _config["GeminiSettings:ModelId"];
         _apiKey = _config["GeminiSettings:ApiKey"];
-        _promptTemplate = _config["GeminiSettings:PromptTemplate"] ?? 
-            "You are a helpful and friendly Discord bot. Respond to the following message in a concise and engaging way. Keep your response under 200 characters.\n\nMessage:\n\"{0}\"\n\nResponse:";
+        
+        // Load prompt components
+        _botPersonality = _config["GeminiSettings:PromptComponents:BotPersonality"] ?? 
+            "You are a helpful and friendly Discord bot.";
+        _responseStyle = _config["GeminiSettings:PromptComponents:ResponseStyle"] ?? 
+            "Respond in a concise and engaging way.";
+        _responseConstraints = _config["GeminiSettings:PromptComponents:ResponseConstraints"] ?? 
+            "Keep your response under 200 characters.";
+
+        // Load context settings
+        _maxContextMessages = _config.GetValue<int>("GeminiSettings:ContextSettings:MaxContextMessages", 5);
+        _includeUsernames = _config.GetValue<bool>("GeminiSettings:ContextSettings:IncludeUsernames", true);
+        _includeTimestamps = _config.GetValue<bool>("GeminiSettings:ContextSettings:IncludeTimestamps", false);
 
         if (string.IsNullOrWhiteSpace(_modelId) || string.IsNullOrWhiteSpace(_apiKey))
         {
@@ -49,7 +68,7 @@ public class GeminiSentimentService
         }
     }
 
-    public async Task<string> GetResponseAsync(string messageContent)
+    public async Task<string> GetResponseAsync(SocketMessage message)
     {
         if (!_isOperational || _generativeModelClient == null)
         {
@@ -57,7 +76,8 @@ public class GeminiSentimentService
             return string.Empty;
         }
 
-        var prompt = string.Format(_promptTemplate, messageContent);
+        var prompt = BuildPrompt(message);
+        _logger.LogDebug("Generated prompt for Gemini: {Prompt}", prompt);
 
         var generationConfig = new GenerationConfig
         {
@@ -73,16 +93,24 @@ public class GeminiSentimentService
 
             var response = await _generativeModelClient.GenerateContent(prompt, generationConfig);
 
-            string? botResponse = response?.Candidates?.FirstOrDefault()?
-                                        .Content?.Parts?.FirstOrDefault()?
-                                        .Text?.Trim();
-
-            if (string.IsNullOrWhiteSpace(botResponse))
+            if (response?.Candidates?.FirstOrDefault()?.Content?.Parts == null)
             {
                 _logger.LogWarning("Gemini returned an empty or null response.");
                 return string.Empty;
             }
 
+            // Join all parts of the response together
+            var botResponse = string.Join(" ", response.Candidates.First().Content.Parts
+                .Select(part => part.Text?.Trim())
+                .Where(text => !string.IsNullOrWhiteSpace(text)));
+
+            if (string.IsNullOrWhiteSpace(botResponse))
+            {
+                _logger.LogWarning("Gemini returned an empty or null response after joining parts.");
+                return string.Empty;
+            }
+
+            _logger.LogDebug("Received response from Gemini: {Response}", botResponse);
             return botResponse;
         }
         catch (Exception ex)
@@ -90,5 +118,65 @@ public class GeminiSentimentService
             _logger.LogError(ex, "Error calling Gemini GenerateContentAsync for model {ModelId}", _modelId);
             return string.Empty;
         }
+    }
+
+    private string BuildPrompt(SocketMessage message)
+    {
+        var promptBuilder = new StringBuilder();
+
+        // Add bot personality and instructions
+        promptBuilder.AppendLine(_botPersonality);
+        promptBuilder.AppendLine(_responseStyle);
+        promptBuilder.AppendLine(_responseConstraints);
+        promptBuilder.AppendLine();
+
+        // Add context if available
+        if (message is SocketUserMessage userMessage)
+        {
+            var contextMessages = GetContextMessages(userMessage);
+            if (contextMessages.Any())
+            {
+                promptBuilder.AppendLine("Previous messages in this conversation:");
+                foreach (var contextMsg in contextMessages)
+                {
+                    var timestamp = _includeTimestamps ? $" [{contextMsg.Timestamp:HH:mm}]" : "";
+                    var username = _includeUsernames ? $"{contextMsg.Author.Username}: " : "";
+                    promptBuilder.AppendLine($"{username}{contextMsg.Content}{timestamp}");
+                }
+                promptBuilder.AppendLine();
+            }
+        }
+
+        // Add the current message
+        promptBuilder.AppendLine("Current message:");
+        promptBuilder.AppendLine($"\"{message.Content}\"");
+        promptBuilder.AppendLine();
+        promptBuilder.AppendLine("Response:");
+
+        return promptBuilder.ToString();
+    }
+
+    private IEnumerable<SocketMessage> GetContextMessages(SocketUserMessage message)
+    {
+        var contextMessages = new List<SocketMessage>();
+        
+        // If the message is a reply, get the referenced message
+        if (message.Reference?.MessageId.IsSpecified == true)
+        {
+            var referencedMessage = message.Channel.GetMessageAsync(message.Reference.MessageId.Value).Result;
+            if (referencedMessage != null)
+            {
+                contextMessages.Add(referencedMessage);
+            }
+        }
+
+        // If in a thread, get previous messages
+        if (message.Channel is IThreadChannel thread)
+        {
+            var messages = thread.GetMessagesAsync(_maxContextMessages).FlattenAsync().Result;
+            contextMessages.AddRange(messages.Where(m => m.Id != message.Id));
+        }
+
+        return contextMessages.OrderBy(m => m.Timestamp);
     }
 }

@@ -42,16 +42,16 @@ public class MessageHandlerService
     {
         try
         {
-            var response = await _geminiService.GetResponseAsync(message.Content);
+            var response = await _geminiService.GetResponseAsync(message);
             if (!string.IsNullOrWhiteSpace(response))
             {
                 await message.Channel.SendMessageAsync(response);
-                _logger.LogInformation("Sent Gemini response to channel {ChannelId}", message.Channel.Id);
+                _logger.LogInformation("Sent response to channel {ChannelId}", message.Channel.Id);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to process Gemini response for message in channel {ChannelId}", message.Channel.Id);
+            _logger.LogError(ex, "Failed to process response for message in channel {ChannelId}", message.Channel.Id);
         }
     }
 }
