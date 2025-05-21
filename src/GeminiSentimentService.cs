@@ -62,7 +62,7 @@ public class GeminiSentimentService
         var generationConfig = new GenerationConfig
         {
             Temperature = 0.7f,
-            MaxOutputTokens = 100,
+            MaxOutputTokens = 1000,
             TopP = 0.8f,
             TopK = 40
         };
