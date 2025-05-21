@@ -5,12 +5,21 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Reflection; // Added for Assembly version logging
 
 public class Program
 {
     public static async Task Main(string[] args)
     {
-        await CreateHostBuilder(args).Build().RunAsync();
+        var host = CreateHostBuilder(args).Build();
+
+        // Log application version
+        var logger = host.Services.GetRequiredService<ILogger<Program>>();
+        var versionAttribute = Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>();
+        string appVersion = versionAttribute?.InformationalVersion ?? "N/A";
+        logger.LogInformation($"Application Version: {appVersion}");
+
+        await host.RunAsync();
     }
 
     public static IHostBuilder CreateHostBuilder(string[] args) =>
