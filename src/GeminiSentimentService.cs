@@ -76,7 +76,7 @@ public class GeminiSentimentService
             return string.Empty;
         }
 
-        var prompt = BuildPrompt(message);
+        var prompt = await BuildPrompt(message);
         _logger.LogDebug("Generated prompt for Gemini: {Prompt}", prompt);
 
         var generationConfig = new GenerationConfig
@@ -134,7 +134,44 @@ public class GeminiSentimentService
         }
     }
 
-    private string BuildPrompt(SocketUserMessage message)
+    private async Task<IEnumerable<SocketUserMessage>> GetContextMessages(SocketUserMessage message)
+    {
+        var contextMessages = new List<SocketUserMessage>();
+        
+        // If the message is a reply, get the referenced message
+        if (message.Reference?.MessageId.IsSpecified == true)
+        {
+            var referencedMessage = await message.Channel.GetMessageAsync(message.Reference.MessageId.Value) as SocketUserMessage;
+            if (referencedMessage != null)
+            {
+                _logger.LogDebug("Added referenced message to context: {MessageId}", referencedMessage.Id);
+                contextMessages.Add(referencedMessage);
+            }
+        }
+
+        // If in a thread, get previous messages
+        if (message.Channel is IThreadChannel thread)
+        {
+            _logger.LogDebug("Retrieving context from thread: {ThreadId}", thread.Id);
+            try
+            {
+                var messages = await thread.GetMessagesAsync(_maxContextMessages).FlattenAsync();
+                var userMessages = messages.OfType<SocketUserMessage>().Where(m => m.Id != message.Id).ToList();
+                _logger.LogDebug("Retrieved {Count} messages from thread", userMessages.Count);
+                contextMessages.AddRange(userMessages);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to retrieve messages from thread {ThreadId}", thread.Id);
+            }
+        }
+
+        var orderedMessages = contextMessages.OrderBy(m => m.Timestamp).ToList();
+        _logger.LogDebug("Total context messages: {Count}", orderedMessages.Count);
+        return orderedMessages;
+    }
+
+    private async Task<string> BuildPrompt(SocketUserMessage message)
     {
         var promptBuilder = new StringBuilder();
 
@@ -145,7 +182,7 @@ public class GeminiSentimentService
         promptBuilder.AppendLine();
 
         // Add context if available
-        var contextMessages = GetContextMessages(message);
+        var contextMessages = await GetContextMessages(message);
         if (contextMessages.Any())
         {
             promptBuilder.AppendLine("Previous messages in this conversation:");
@@ -165,29 +202,5 @@ public class GeminiSentimentService
         promptBuilder.AppendLine("Response:");
 
         return promptBuilder.ToString();
-    }
-
-    private IEnumerable<SocketUserMessage> GetContextMessages(SocketUserMessage message)
-    {
-        var contextMessages = new List<SocketUserMessage>();
-        
-        // If the message is a reply, get the referenced message
-        if (message.Reference?.MessageId.IsSpecified == true)
-        {
-            var referencedMessage = message.Channel.GetMessageAsync(message.Reference.MessageId.Value).Result as SocketUserMessage;
-            if (referencedMessage != null)
-            {
-                contextMessages.Add(referencedMessage);
-            }
-        }
-
-        // If in a thread, get previous messages
-        if (message.Channel is IThreadChannel thread)
-        {
-            var messages = thread.GetMessagesAsync(_maxContextMessages).FlattenAsync().Result;
-            contextMessages.AddRange(messages.OfType<SocketUserMessage>().Where(m => m.Id != message.Id));
-        }
-
-        return contextMessages.OrderBy(m => m.Timestamp);
     }
 }
